@@ -102,11 +102,6 @@ print(struct box_t * box)
 			}
 			putchar('\n');
 		}
-	} else {
-		fprintf(stderr, "\tPIECE '%c': %lux%lu\n",
-				(char)box->id,
-				(long unsigned int)h,
-				(long unsigned int)w);
 	}
 }
 
@@ -414,7 +409,10 @@ main(void)
 			(long unsigned)world->width,
 			(long unsigned)pc);
 	for (i = 0; i < pc; ++i) {
-		print(pieces[i]);
+		fprintf(stderr, "\tPIECE '%c': %lux%lu\n",
+				(char)pieces[i]->id,
+				(long unsigned int)pieces[i]->height,
+				(long unsigned int)pieces[i]->width);
 	}
 	#endif
 
