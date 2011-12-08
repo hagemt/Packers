@@ -322,10 +322,13 @@ pack(struct box_t * space, struct box_list_t * list, size_t depth)
 				pack(space, list->tail, depth + 1);
 				fill(space, WORLD_ID, i, j, piece->height, piece->width);
 			#ifdef ROTATIONS
+			/* TODO nix all of this, it's awful */
 			} else if (space->id == WORLD_ID) {
-				space->id = '\0';
-				rotate(piece);
-				goto check_fits;
+				if (piece->height != piece->width) {
+					space->id = '\0';
+					rotate(piece);
+					goto check_fits;
+				}
 			} else {
 				space->id = WORLD_ID;
 				rotate(piece);
