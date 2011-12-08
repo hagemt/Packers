@@ -11,7 +11,7 @@ void *
 packer(void *);
 #endif /* THREADS */
 
-/* Box Definitions */
+/* Box Definitions ***********************************************************/
 
 typedef size_t box_size_t;
 typedef char box_data_t;
@@ -48,7 +48,7 @@ thread_list_t
 } thread_list;
 #endif
 
-/* Box Manipulations */
+/* Box Manipulations *********************************************************/
 
 struct box_t *
 create_with_data(box_size_t height, box_size_t width)
@@ -66,6 +66,7 @@ create_with_data(box_size_t height, box_size_t width)
 	return new_box;
 }
 
+#ifdef THREADS
 struct box_t *
 copy_data(struct box_t * box)
 {
@@ -82,6 +83,7 @@ copy_data(struct box_t * box)
 	}
 	return new_box;
 }
+#endif
 
 void
 destroy(struct box_t * box)
@@ -125,8 +127,8 @@ print(struct box_t * box)
 inline void
 rotate(struct box_t * box)
 {
-	/* TODO doesn't work with threads or in general?
-	 * TODO in general, it's a hack...
+	/* TODO doesn't work with threads
+	 * TODO also, it's a terrible hack in general...
 	 */
 	box_size_t s;
 	assert(box && !box->data);
@@ -136,7 +138,7 @@ rotate(struct box_t * box)
 }
 #endif
 
-/* Packing Functions */
+/* Packing Functions *********************************************************/
 
 int
 fits(struct box_t * space, struct box_t * piece, box_size_t x, box_size_t y)
@@ -178,13 +180,15 @@ void
 pack(struct box_t * space, struct box_list_t * list, size_t * count, size_t depth)
 {
 	box_size_t i, j;
-	struct box_t * new_space, * piece;
+	struct box_t * piece;
 	#ifdef THREADS
 	struct thread_list_t * current, * next;
 	current = next = &thread_list;
 	#endif
 	assert(space && list && count);
 	piece = list->head;
+
+	/* Base case: we are out of pieces, so dump */
 	if (!piece) {
 		/* TODO problem with mutex on count? */
 		++*count;
@@ -195,23 +199,25 @@ pack(struct box_t * space, struct box_list_t * list, size_t * count, size_t dept
 		putchar('\n');
 		return;
 	}
+
+	/* Otherwise, we need to try this piece at every position */
 	for (i = 0; i < space->height; ++i) {
 		for (j = 0; j < space->width; ++j) {
 			#ifdef ROTATIONS
 			check_fits:
 			#endif
 			if (fits(space, piece, i, j)) {
-				new_space = copy_data(space);
-				fill(new_space, piece->id, i, j, piece->height, piece->width);
+				/* If the piece fits here */
         			#ifdef THREADS
 				if (depth == BRANCH_LEVEL) {
 					/* Setup the thread node */
 					next = malloc(sizeof(struct thread_list_t));
 					next->head = malloc(sizeof(struct thread_data_t));
-					next->head->space = new_space;
+					next->head->space = copy_data(space);
 					next->head->list  = list->tail;
 					next->head->count = count;
 					next->tail = NULL;
+					fill(next->head->space, piece->id, i, j, piece->height, piece->width);
 					if (pthread_create(&next->head->tid, NULL, &packer, next->head)) {
 						destroy(next->head->space);
 						free(next->head);
@@ -220,10 +226,16 @@ pack(struct box_t * space, struct box_list_t * list, size_t * count, size_t dept
 						current->tail = next;
 						current = next;
           				}
+				} else {
+					fill(space, piece->id, i, j, piece->height, piece->width);
+					pack(space, list->tail, count, depth + 1);
+					fill(space, WORLD_ID, i, j, piece->height, piece->width);
 				}
 				#else
-				pack(new_space, list->tail, count, depth + 1);
-				destroy(new_space);
+				/* Try packing the remaining pieces and then reset the state */
+				fill(space, piece->id, i, j, piece->height, piece->width);
+				pack(space, list->tail, count, depth + 1);
+				fill(space, WORLD_ID, i, j, piece->height, piece->width);
 				#endif
 			}
 			#ifdef ROTATIONS
@@ -238,7 +250,10 @@ pack(struct box_t * space, struct box_list_t * list, size_t * count, size_t dept
 			#endif
 		}
 	}
+
 	#ifdef THREADS
+	/* In the case of threads, the top level needs to  */
+	assert(thread_list.head == NULL);
 	if (depth == BRANCH_LEVEL) {
 		current = thread_list.tail;
 		thread_list.tail = NULL;
@@ -257,7 +272,7 @@ pack(struct box_t * space, struct box_list_t * list, size_t * count, size_t dept
 	#endif
 }
 
-/* Utility Functions */
+/* Utility Functions *********************************************************/
 
 #ifdef THREADS
 void *
