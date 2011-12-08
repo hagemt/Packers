@@ -264,9 +264,13 @@ void *
 packer(void * package)
 {
 	struct thread_data_t * data = (struct thread_data_t *)package;
+	#ifdef VERBOSE
 	fprintf(stderr, "[thread %lu] worker started\n", (long unsigned)data->tid);
+	#endif
 	pack(data->space, data->list, data->count, BRANCH_LEVEL + 1);
+	#ifdef VERBOSE
 	fprintf(stderr, "[thread %lu] worker finished\n", (long unsigned)data->tid);
+	#endif
 	return NULL;
 }
 #endif
