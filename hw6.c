@@ -1,11 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
-
 #define WORLD_ID '.'
 
 #ifdef THREADS
-#define BRANCH_LEVEL 0
+#define MAX_THREADS 4
+#define MAX_BRANCH_LEVEL 4
+#define LIST_HEAD (struct thread_data_t *)(-1)
 #include <pthread.h>
 void *
 packer(void *);
@@ -29,24 +30,6 @@ box_list_t
 	struct box_t * head;
 	struct box_list_t * tail;
 };
-
-#ifdef THREADS
-struct
-thread_data_t
-{
-	pthread_t tid;
-	struct box_t * space;
-	struct box_list_t * list;
-	size_t * count;
-};
-
-struct
-thread_list_t
-{
-	struct thread_data_t * head;
-	struct thread_list_t * tail;
-} thread_list;
-#endif
 
 /* Box Manipulations *********************************************************/
 
@@ -116,7 +99,7 @@ print(struct box_t * box)
 			putchar('\n');
 		}
 	} else {
-		fprintf(stderr, "\tPIECE: %c %lu %lu\n",
+		fprintf(stderr, "\tPIECE '%c': %lux%lu\n",
 				(char)box->id,
 				(long unsigned int)h,
 				(long unsigned int)w);
@@ -135,6 +118,103 @@ rotate(struct box_t * box)
 	s = box->height;
 	box->height = box->width;
 	box->width = s;
+}
+#endif
+
+/* Thread Definitions ********************************************************/
+
+#ifdef THREADS
+struct
+thread_data_t
+{
+	pthread_t tid;
+	struct box_t * space;
+	struct box_list_t * list;
+	size_t * count;
+	size_t depth;
+};
+
+struct
+thread_list_t
+{
+	struct thread_data_t * head;
+	struct thread_list_t * tail;
+};
+
+struct
+thread_db_t
+{
+	struct thread_list_t * list, * next;
+	pthread_mutex_t list_mutex;
+	pthread_mutex_t count_mutex;
+	size_t thread_count, thread_limit;
+} thread_db;
+
+struct thread_list_t *
+init_thread_db(size_t thread_limit)
+{
+	thread_db.list = malloc(sizeof(struct thread_list_t));
+	thread_db.list->head = LIST_HEAD;
+	thread_db.list->tail = NULL;
+	thread_db.next = thread_db.list;
+	pthread_mutex_init(&thread_db.list_mutex, NULL);
+	pthread_mutex_init(&thread_db.count_mutex, NULL);
+	thread_db.thread_count = 0;
+	thread_db.thread_limit = thread_limit;
+	return thread_db.list;
+}
+
+typedef void (*thread_db_error_handler)(pthread_t);
+
+void
+destroy_thread_db(thread_db_error_handler callback)
+{
+	struct thread_list_t * current, * next;
+	current = thread_db.list->tail;
+	while (current) {
+		next = current->tail;
+		if (pthread_join(current->head->tid, NULL)) {
+			#ifdef VERBOSE
+			fprintf(stderr, "ERROR: unable to collect worker\n");
+			#endif
+			if (callback) {
+				callback(current->head->tid);
+			}
+		}
+		destroy(current->head->space);
+		free(current->head);
+		free(current);
+		current = next;
+	}
+	free(thread_db.list);
+	pthread_mutex_destroy(&thread_db.list_mutex);
+	pthread_mutex_destroy(&thread_db.count_mutex);
+	thread_db.thread_count = thread_db.thread_limit = 0;
+}
+
+int
+add_thread(struct thread_db_t * db, struct thread_data_t * thread_data)
+{
+	assert(db && db->next);
+	pthread_mutex_lock(&db->list_mutex);
+	if (db->thread_count < db->thread_limit) {
+		db->next->tail = malloc(sizeof(struct thread_list_t *));
+		db->next->tail->head = thread_data;
+		db->next->tail->tail = NULL;
+		if (pthread_create(&thread_data->tid, NULL, &packer, thread_data)) {
+	  		destroy(thread_data->space);
+			free(thread_data);
+			free(db->next->tail);
+			db->next->tail = NULL;
+		} else {
+			++db->thread_count;
+			db->next = db->next->tail;
+			pthread_mutex_unlock(&db->list_mutex);
+			return EXIT_SUCCESS;
+		}
+	}
+	pthread_mutex_unlock(&db->list_mutex);
+	return EXIT_FAILURE;
 }
 #endif
 
@@ -176,25 +256,26 @@ fill(struct box_t * box, box_data_t value,
 	}
 }
 
+
 void
 pack(struct box_t * space, struct box_list_t * list, size_t * count, size_t depth)
 {
 	box_size_t i, j;
 	struct box_t * piece;
 	#ifdef THREADS
-	struct thread_list_t * current, * next;
-	current = next = &thread_list;
+	struct thread_data_t * child_data;
 	#endif
 	assert(space && list && count);
 	piece = list->head;
 
 	/* Base case: we are out of pieces, so dump */
 	if (!piece) {
-		/* TODO problem with mutex on count? */
+		pthread_mutex_lock(&thread_db.count_mutex);
 		++*count;
 		#ifdef VERBOSE
-		fprintf(stderr, "INFO: found solution %lu at depth %lu\n", *count, depth);
+		fprintf(stderr, "INFO: found solution %lu at depth %lu\n", (unsigned long)*count, (unsigned long)depth);
 		#endif
+		pthread_mutex_unlock(&thread_db.count_mutex);
 		print(space);
 		putchar('\n');
 		return;
@@ -207,69 +288,35 @@ pack(struct box_t * space, struct box_list_t * list, size_t * count, size_t dept
 			check_fits:
 			#endif
 			if (fits(space, piece, i, j)) {
-				/* If the piece fits here */
+				/* If the piece fits here, either spawn or branch */
         			#ifdef THREADS
-				if (depth == BRANCH_LEVEL) {
+				if (depth < MAX_BRANCH_LEVEL) {
 					/* Setup the thread node */
-					next = malloc(sizeof(struct thread_list_t));
-					next->head = malloc(sizeof(struct thread_data_t));
-					next->head->space = copy_data(space);
-					next->head->list  = list->tail;
-					next->head->count = count;
-					next->tail = NULL;
-					fill(next->head->space, piece->id, i, j, piece->height, piece->width);
-					if (pthread_create(&next->head->tid, NULL, &packer, next->head)) {
-						destroy(next->head->space);
-						free(next->head);
-						free(next);
-					} else {
-						current->tail = next;
-						current = next;
-          				}
-				} else {
-					fill(space, piece->id, i, j, piece->height, piece->width);
-					pack(space, list->tail, count, depth + 1);
-					fill(space, WORLD_ID, i, j, piece->height, piece->width);
+					child_data = malloc(sizeof(struct thread_data_t));
+					child_data->space = copy_data(space);
+					child_data->list  = list->tail;
+					child_data->count = count;
+					child_data->depth = depth;
+					fill(child_data->space, piece->id, i, j, piece->height, piece->width);
+					if (!add_thread(&thread_db, child_data)) { continue; }
 				}
-				#else
+				#endif
 				/* Try packing the remaining pieces and then reset the state */
 				fill(space, piece->id, i, j, piece->height, piece->width);
 				pack(space, list->tail, count, depth + 1);
 				fill(space, WORLD_ID, i, j, piece->height, piece->width);
-				#endif
-			}
 			#ifdef ROTATIONS
-			if (space->id == WORLD_ID) {
+			} else if (space->id == WORLD_ID) {
 				space->id = '\0';
 				rotate(piece);
 				goto check_fits;
 			} else {
 				space->id = WORLD_ID;
 				rotate(piece);
-			}
 			#endif
-		}
-	}
-
-	#ifdef THREADS
-	/* In the case of threads, the top level needs to  */
-	assert(thread_list.head == NULL);
-	if (depth == BRANCH_LEVEL) {
-		current = thread_list.tail;
-		thread_list.tail = NULL;
-		while (current) {
-			next = current->tail;
-			assert(current->head);
-			if (pthread_join(current->head->tid, NULL)) {
-				fprintf(stderr, "ERROR: cannot collect worker\n");
 			}
-			destroy(current->head->space);
-			free(current->head);
-			free(current);
-			current = next;
 		}
 	}
-	#endif
 }
 
 /* Utility Functions *********************************************************/
@@ -282,7 +329,7 @@ packer(void * package)
 	#ifdef VERBOSE
 	fprintf(stderr, "[thread %lu] worker started\n", (long unsigned)data->tid);
 	#endif
-	pack(data->space, data->list, data->count, BRANCH_LEVEL + 1);
+	pack(data->space, data->list, data->count, data->depth + 1);
 	#ifdef VERBOSE
 	fprintf(stderr, "[thread %lu] worker finished\n", (long unsigned)data->tid);
 	#endif
@@ -332,7 +379,7 @@ main(void)
 	pieces[i] = NULL;
 	sc = 0;
 
-	/* Setup optional bits */
+	/* Setup optional optimizations */
 	#ifdef SORT
 	qsort(pieces, pc, sizeof(struct box_t *), &large_to_small);
 	#endif
@@ -354,18 +401,18 @@ main(void)
 
 	/* Actual packing */
 	#ifdef THREADS
-	thread_list.head = NULL;
-	thread_list.tail = NULL;
+	thread_db.list = init_thread_db(MAX_THREADS);
 	#endif
 	pack(world, list, &sc, 0);
-	printf("%lu solution(s) found.\n", (long unsigned)sc);
 
 	/* Cleanup */
+	destroy_thread_db(NULL);
 	destroy(world);
 	for (i = 0; i < pc; ++i) {
 		free(pieces[i]);
 	}
 	free(pieces);
 	free(list);
-	return EXIT_SUCCESS;
+	/* TODO more elegant solution */
+	return (int)sc;
 }
