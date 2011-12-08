@@ -31,6 +31,12 @@ box_list_t
 	struct box_list_t * tail;
 };
 
+struct
+box_db_t {
+	struct box_list_t list;
+	box_size_t num_elements;
+} box_db;
+
 /* Box Manipulations *********************************************************/
 
 struct box_t *
@@ -49,7 +55,6 @@ create_with_data(box_size_t height, box_size_t width)
 	return new_box;
 }
 
-#ifdef THREADS
 struct box_t *
 copy_data(struct box_t * box)
 {
@@ -66,7 +71,6 @@ copy_data(struct box_t * box)
 	}
 	return new_box;
 }
-#endif
 
 void
 destroy(struct box_t * box)
@@ -106,6 +110,18 @@ print(struct box_t * box)
 	}
 }
 
+void
+add_box(struct box_db_t * db, struct box_t * box)
+{
+	struct box_list_t * node;
+	assert(db && db->list.head && box);
+	node = malloc(sizeof(struct box_list_t *));
+	node->head = copy_data(box);
+	node->tail = db->list.tail;
+	db->list.tail = node;
+	++db->num_elements;
+}
+
 #ifdef ROTATIONS
 inline void
 rotate(struct box_t * box)
@@ -130,7 +146,6 @@ thread_data_t
 	pthread_t tid;
 	struct box_t * space;
 	struct box_list_t * list;
-	size_t * count;
 	size_t depth;
 };
 
@@ -146,7 +161,7 @@ thread_db_t
 {
 	struct thread_list_t * list, * next;
 	pthread_mutex_t list_mutex;
-	pthread_mutex_t count_mutex;
+	pthread_mutex_t result_mutex;
 	size_t thread_count, thread_limit;
 } thread_db;
 
@@ -158,7 +173,7 @@ init_thread_db(size_t thread_limit)
 	thread_db.list->tail = NULL;
 	thread_db.next = thread_db.list;
 	pthread_mutex_init(&thread_db.list_mutex, NULL);
-	pthread_mutex_init(&thread_db.count_mutex, NULL);
+	pthread_mutex_init(&thread_db.result_mutex, NULL);
 	thread_db.thread_count = 0;
 	thread_db.thread_limit = thread_limit;
 	return thread_db.list;
@@ -188,7 +203,7 @@ destroy_thread_db(thread_db_error_handler callback)
 	}
 	free(thread_db.list);
 	pthread_mutex_destroy(&thread_db.list_mutex);
-	pthread_mutex_destroy(&thread_db.count_mutex);
+	pthread_mutex_destroy(&thread_db.result_mutex);
 	thread_db.thread_count = thread_db.thread_limit = 0;
 }
 
@@ -258,26 +273,28 @@ fill(struct box_t * box, box_data_t value,
 
 
 void
-pack(struct box_t * space, struct box_list_t * list, size_t * count, size_t depth)
+pack(struct box_t * space, struct box_list_t * list, size_t depth)
 {
 	box_size_t i, j;
 	struct box_t * piece;
 	#ifdef THREADS
 	struct thread_data_t * child_data;
 	#endif
-	assert(space && list && count);
+	assert(space && list);
 	piece = list->head;
 
 	/* Base case: we are out of pieces, so dump */
 	if (!piece) {
-		pthread_mutex_lock(&thread_db.count_mutex);
-		++*count;
-		#ifdef VERBOSE
-		fprintf(stderr, "INFO: found solution %lu at depth %lu\n", (unsigned long)*count, (unsigned long)depth);
+		#ifdef THREADS
+		pthread_mutex_lock(&thread_db.result_mutex);
 		#endif
-		pthread_mutex_unlock(&thread_db.count_mutex);
-		print(space);
-		putchar('\n');
+		add_box(&box_db, space);
+		#ifdef VERBOSE
+		fprintf(stderr, "INFO: found solution %lu\n", (unsigned long)box_db.num_elements);
+		#endif
+		#ifdef THREADS
+		pthread_mutex_unlock(&thread_db.result_mutex);
+		#endif
 		return;
 	}
 
@@ -295,7 +312,6 @@ pack(struct box_t * space, struct box_list_t * list, size_t * count, size_t dept
 					child_data = malloc(sizeof(struct thread_data_t));
 					child_data->space = copy_data(space);
 					child_data->list  = list->tail;
-					child_data->count = count;
 					child_data->depth = depth;
 					fill(child_data->space, piece->id, i, j, piece->height, piece->width);
 					if (!add_thread(&thread_db, child_data)) { continue; }
@@ -303,7 +319,7 @@ pack(struct box_t * space, struct box_list_t * list, size_t * count, size_t dept
 				#endif
 				/* Try packing the remaining pieces and then reset the state */
 				fill(space, piece->id, i, j, piece->height, piece->width);
-				pack(space, list->tail, count, depth + 1);
+				pack(space, list->tail, depth + 1);
 				fill(space, WORLD_ID, i, j, piece->height, piece->width);
 			#ifdef ROTATIONS
 			} else if (space->id == WORLD_ID) {
@@ -329,7 +345,7 @@ packer(void * package)
 	#ifdef VERBOSE
 	fprintf(stderr, "[thread %lu] worker started\n", (long unsigned)data->tid);
 	#endif
-	pack(data->space, data->list, data->count, data->depth + 1);
+	pack(data->space, data->list, data->depth + 1);
 	#ifdef VERBOSE
 	fprintf(stderr, "[thread %lu] worker finished\n", (long unsigned)data->tid);
 	#endif
@@ -355,8 +371,9 @@ int
 main(void)
 {
 	/* Declarations */
+	size_t i, pc;
+	box_data_t pid;
 	box_size_t wh, ww, ph, pw;
-	size_t i, pc, sc; box_data_t pid;
 	struct box_t * world, ** pieces;
 	struct box_list_t * list;
 
@@ -377,7 +394,6 @@ main(void)
 		pieces[i]->data = NULL;
 	}
 	pieces[i] = NULL;
-	sc = 0;
 
 	/* Setup optional optimizations */
 	#ifdef SORT
@@ -403,16 +419,34 @@ main(void)
 	#ifdef THREADS
 	thread_db.list = init_thread_db(MAX_THREADS);
 	#endif
-	pack(world, list, &sc, 0);
+	box_db.list.head = world;
+	box_db.list.tail = NULL;
+	box_db.num_elements = 0;
+	pack(world, list, 0);
+	#ifdef THREADS
+	destroy_thread_db(NULL);
+	#endif
+
+	/* Print results */
+	if (box_db.num_elements) {
+		printf("%lu solution(s) found:\n", box_db.num_elements);
+	} else {
+		printf("No solutions found.\n");
+	}
+	list = box_db.list.tail;
+	while (list) {
+		box_db.list.tail = list->tail;
+		putchar('\n');
+		print(list->head);
+		list = box_db.list.tail;
+	}
 
 	/* Cleanup */
-	destroy_thread_db(NULL);
 	destroy(world);
 	for (i = 0; i < pc; ++i) {
 		free(pieces[i]);
 	}
 	free(pieces);
 	free(list);
-	/* TODO more elegant solution */
-	return (int)sc;
+	return EXIT_SUCCESS;
 }
