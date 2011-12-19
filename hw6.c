@@ -310,6 +310,8 @@ pack(struct box_t * space, struct box_list_t * list, size_t depth)
 					child_data->depth = depth;
 					fill(child_data->space, piece->id, i, j, piece->height, piece->width);
 					if (!add_thread(&thread_db, child_data)) { continue; }
+					destroy(child_data->space);
+					free(child_data);
 				}
 				#endif
 				/* Try packing the remaining pieces and then reset the state */
