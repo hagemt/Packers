@@ -208,7 +208,7 @@ add_thread(struct thread_db_t * db, struct thread_data_t * thread_data)
 	assert(db && db->next);
 	pthread_mutex_lock(&db->list_mutex);
 	if (db->thread_count < db->thread_limit) {
-		db->next->tail = malloc(sizeof(struct thread_list_t *));
+		db->next->tail = malloc(sizeof(struct thread_list_t));
 		db->next->tail->head = thread_data;
 		db->next->tail->tail = NULL;
 		if (pthread_create(&thread_data->tid, NULL, &packer, thread_data)) {
