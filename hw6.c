@@ -7,8 +7,8 @@
 #define MAX_THREADS 4
 #define MAX_BRANCH_LEVEL 4
 #include <pthread.h>
-void *
-packer(void *);
+static void *
+worker(void *);
 #endif /* THREADS */
 
 /* Box Definitions ***********************************************************/
@@ -38,7 +38,7 @@ box_db_t {
 
 /* Box Manipulations *********************************************************/
 
-struct box_t *
+inline struct box_t *
 create_with_data(box_size_t height, box_size_t width)
 {
 	box_size_t i;
@@ -54,7 +54,7 @@ create_with_data(box_size_t height, box_size_t width)
 	return new_box;
 }
 
-struct box_t *
+inline struct box_t *
 copy_data(struct box_t * box)
 {
 	box_size_t i, j, h, w;
@@ -71,7 +71,7 @@ copy_data(struct box_t * box)
 	return new_box;
 }
 
-void
+inline void
 destroy(struct box_t * box)
 {
 	box_size_t i, h;
@@ -87,7 +87,7 @@ destroy(struct box_t * box)
 	free(box);
 }
 
-void
+inline void
 print(struct box_t * box)
 {
 	box_size_t i, j, h, w;
@@ -104,7 +104,7 @@ print(struct box_t * box)
 	}
 }
 
-void
+inline void
 add_box(struct box_db_t * db, struct box_t * box)
 {
 	struct box_list_t * node;
@@ -160,7 +160,7 @@ thread_db_t
 } thread_db;
 
 inline void
-init_thread_db(struct thread_db_t * db, size_t thread_limit)
+prepare_thread_db(struct thread_db_t * db, size_t thread_limit)
 {
 	db->list = malloc(sizeof(struct thread_list_t));
 	db->list->head = (struct thread_data_t *)0;
@@ -174,14 +174,14 @@ init_thread_db(struct thread_db_t * db, size_t thread_limit)
 typedef void (*thread_db_error_handler)(pthread_t);
 
 inline void
-destroy_thread_db(struct thread_db_t * db, thread_db_error_handler callback)
+finalize_thread_db(struct thread_db_t * db, thread_db_error_handler callback)
 {
 	struct thread_list_t * current, * next;
 	current = db->list->tail;
 	while (current) {
 		next = current->tail;
 		if (pthread_join(current->head->tid, NULL)) {
-			#ifdef VERBOSE
+			#ifndef NDEBUG
 			fprintf(stderr, "ERROR: unable to collect worker\n");
 			#endif
 			if (callback) {
@@ -211,7 +211,7 @@ add_thread(struct thread_db_t * db, struct thread_data_t * thread_data)
 		next = malloc(sizeof(struct thread_list_t));
 		next->head = thread_data;
 		next->tail = db->list->tail;
-		if (pthread_create(&thread_data->tid, NULL, &packer, thread_data)) {
+		if (pthread_create(&thread_data->tid, NULL, &worker, thread_data)) {
 			free(next);
 		} else {
 			++db->thread_count;
@@ -246,7 +246,7 @@ fits(struct box_t * space, struct box_t * piece, box_size_t x, box_size_t y)
 	return 1;
 }
 
-void
+inline void
 fill(struct box_t * box, box_data_t value,
 	box_size_t x, box_size_t y,
 	box_size_t h, box_size_t w)
@@ -269,7 +269,7 @@ pack(struct box_t * space, struct box_list_t * list, size_t depth)
 	box_size_t i, j;
 	struct box_t * piece;
 	#ifdef THREADS
-	struct thread_data_t * child_data;
+	struct thread_data_t * worker_data;
 	#endif
 	assert(space && list);
 	piece = list->head;
@@ -280,7 +280,7 @@ pack(struct box_t * space, struct box_list_t * list, size_t depth)
 		pthread_mutex_lock(&thread_db.result_mutex);
 		#endif
 		add_box(&box_db, space);
-		#ifdef VERBOSE
+		#ifndef NDEBUG 
 		fprintf(stderr, "INFO: found solution %lu\n", (unsigned long)box_db.num_elements);
 		#endif
 		#ifdef THREADS
@@ -300,14 +300,14 @@ pack(struct box_t * space, struct box_list_t * list, size_t depth)
         			#ifdef THREADS
 				if (depth < MAX_BRANCH_LEVEL) {
 					/* Setup the thread node */
-					child_data = malloc(sizeof(struct thread_data_t));
-					child_data->space = copy_data(space);
-					child_data->list  = list->tail;
-					child_data->depth = depth + 1;
-					fill(child_data->space, piece->id, i, j, piece->height, piece->width);
-					if (!add_thread(&thread_db, child_data)) { continue; }
-					destroy(child_data->space);
-					free(child_data);
+					worker_data = malloc(sizeof(struct thread_data_t));
+					worker_data->space = copy_data(space);
+					worker_data->list  = list->tail;
+					worker_data->depth = depth + 1;
+					fill(worker_data->space, piece->id, i, j, piece->height, piece->width);
+					if (!add_thread(&thread_db, worker_data)) { continue; }
+					destroy(worker_data->space);
+					free(worker_data);
 				}
 				#endif
 				/* Try packing the remaining pieces and then reset the state */
@@ -334,15 +334,15 @@ pack(struct box_t * space, struct box_list_t * list, size_t depth)
 /* Utility Functions *********************************************************/
 
 #ifdef THREADS
-void *
-packer(void * package)
+static void *
+worker(void * thread_data)
 {
-	struct thread_data_t * data = (struct thread_data_t *)package;
-	#ifdef VERBOSE
+	struct thread_data_t * data = (struct thread_data_t *)thread_data;
+	#ifndef NDEBUG
 	fprintf(stderr, "[thread %lu] worker started\n", (long unsigned)data->tid);
 	#endif
 	pack(data->space, data->list, data->depth);
-	#ifdef VERBOSE
+	#ifndef NDEBUG
 	fprintf(stderr, "[thread %lu] worker finished\n", (long unsigned)data->tid);
 	#endif
 	return NULL;
@@ -401,7 +401,7 @@ main(void)
 	}
 	list[i].head = NULL;
 	list[i].tail = NULL;
-	#ifdef VERBOSE
+	#ifndef NDEBUG
 	fprintf(stderr, "INFO:\t%lux%lu BOARD w/ %lu PIECES\n",
 			(long unsigned)world->height,
 			(long unsigned)world->width,
@@ -416,14 +416,14 @@ main(void)
 
 	/* Actual packing */
 	#ifdef THREADS
-	init_thread_db(&thread_db, MAX_THREADS);
+	prepare_thread_db(&thread_db, MAX_THREADS);
 	#endif
 	box_db.list.head = world;
 	box_db.list.tail = NULL;
 	box_db.num_elements = 0;
 	pack(world, list, 0);
 	#ifdef THREADS
-	destroy_thread_db(&thread_db, NULL);
+	finalize_thread_db(&thread_db, NULL);
 	#endif
 
 	/* Print results */

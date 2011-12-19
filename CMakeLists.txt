@@ -2,15 +2,10 @@ cmake_minimum_required(VERSION 2.8)
 
 project(HW6 C)
 
-option(VERBOSE_MODE  "Produce verbose output"            OFF)
 option(ROTATE_PIECES "Use rotated pieces [experimental]" OFF)
 option(SORT_PIECES   "Sort pieces in increasing size"    ON)
 option(USE_THREADS   "Support for pthreads"              OFF)
 option(BUILD_TESTING "Include the testing harness"       OFF)
-
-if(VERBOSE_MODE)
-  set(CMAKE_C_FLAGS "-DVERBOSE ${CMAKE_C_FLAGS}")
-endif(VERBOSE_MODE)
 
 if(ROTATE_PIECES)
   set(CMAKE_C_FLAGS "-DROTATIONS ${CMAKE_C_FLAGS}")
