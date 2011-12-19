@@ -307,7 +307,7 @@ pack(struct box_t * space, struct box_list_t * list, size_t depth)
 					child_data = malloc(sizeof(struct thread_data_t));
 					child_data->space = copy_data(space);
 					child_data->list  = list->tail;
-					child_data->depth = depth;
+					child_data->depth = depth + 1;
 					fill(child_data->space, piece->id, i, j, piece->height, piece->width);
 					if (!add_thread(&thread_db, child_data)) { continue; }
 					destroy(child_data->space);
@@ -345,7 +345,7 @@ packer(void * package)
 	#ifdef VERBOSE
 	fprintf(stderr, "[thread %lu] worker started\n", (long unsigned)data->tid);
 	#endif
-	pack(data->space, data->list, data->depth + 1);
+	pack(data->space, data->list, data->depth);
 	#ifdef VERBOSE
 	fprintf(stderr, "[thread %lu] worker finished\n", (long unsigned)data->tid);
 	#endif
