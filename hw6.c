@@ -110,7 +110,7 @@ add_box(struct box_db_t * db, struct box_t * box)
 {
 	struct box_list_t * node;
 	assert(db && db->list.head && box);
-	node = malloc(sizeof(struct box_list_t *));
+	node = malloc(sizeof(struct box_list_t));
 	node->head = copy_data(box);
 	node->tail = db->list.tail;
 	db->list.tail = node;
@@ -373,7 +373,7 @@ main(void)
 	box_data_t pid;
 	box_size_t wh, ww, ph, pw;
 	struct box_t * world, ** pieces;
-	struct box_list_t * list;
+	struct box_list_t * list, * result;
 
 	/* Read input (TODO remove scanf's) */
 	int sr = scanf("%lu %lu\n%lu\n", &ww, &wh, &pc);
@@ -434,12 +434,14 @@ main(void)
 	} else {
 		printf("No solutions found.\n");
 	}
-	list = box_db.list.tail;
-	while (list) {
-		box_db.list.tail = list->tail;
+	result = box_db.list.tail;
+	while (result) {
+		box_db.list.tail = result->tail;
 		putchar('\n');
-		print(list->head);
-		list = box_db.list.tail;
+		print(result->head);
+		destroy(result->head);
+		free(result);
+		result = box_db.list.tail;
 	}
 
 	/* Cleanup */
