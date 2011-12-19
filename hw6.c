@@ -6,7 +6,6 @@
 #ifdef THREADS
 #define MAX_THREADS 4
 #define MAX_BRANCH_LEVEL 4
-#define LIST_HEAD (struct thread_data_t *)(-1)
 #include <pthread.h>
 void *
 packer(void *);
@@ -154,33 +153,31 @@ thread_list_t
 struct
 thread_db_t
 {
-	struct thread_list_t * list, * next;
+	struct thread_list_t * list;
 	pthread_mutex_t list_mutex;
 	pthread_mutex_t result_mutex;
 	size_t thread_count, thread_limit;
 } thread_db;
 
-struct thread_list_t *
-init_thread_db(size_t thread_limit)
+inline void
+init_thread_db(struct thread_db_t * db, size_t thread_limit)
 {
-	thread_db.list = malloc(sizeof(struct thread_list_t));
-	thread_db.list->head = LIST_HEAD;
-	thread_db.list->tail = NULL;
-	thread_db.next = thread_db.list;
-	pthread_mutex_init(&thread_db.list_mutex, NULL);
-	pthread_mutex_init(&thread_db.result_mutex, NULL);
-	thread_db.thread_count = 0;
-	thread_db.thread_limit = thread_limit;
-	return thread_db.list;
+	db->list = malloc(sizeof(struct thread_list_t));
+	db->list->head = (struct thread_data_t *)0;
+	db->list->tail = NULL;
+	pthread_mutex_init(&db->list_mutex, NULL);
+	pthread_mutex_init(&db->result_mutex, NULL);
+	db->thread_count = 0;
+	db->thread_limit = thread_limit;
 }
 
 typedef void (*thread_db_error_handler)(pthread_t);
 
-void
-destroy_thread_db(thread_db_error_handler callback)
+inline void
+destroy_thread_db(struct thread_db_t * db, thread_db_error_handler callback)
 {
 	struct thread_list_t * current, * next;
-	current = thread_db.list->tail;
+	current = db->list->tail;
 	while (current) {
 		next = current->tail;
 		if (pthread_join(current->head->tid, NULL)) {
@@ -196,35 +193,34 @@ destroy_thread_db(thread_db_error_handler callback)
 		free(current);
 		current = next;
 	}
-	free(thread_db.list);
-	pthread_mutex_destroy(&thread_db.list_mutex);
-	pthread_mutex_destroy(&thread_db.result_mutex);
-	thread_db.thread_count = thread_db.thread_limit = 0;
+	free(db->list);
+	pthread_mutex_destroy(&db->list_mutex);
+	pthread_mutex_destroy(&db->result_mutex);
+	db->thread_count = db->thread_limit = 0;
 }
 
 int
 add_thread(struct thread_db_t * db, struct thread_data_t * thread_data)
 {
-	assert(db && db->next);
+	int status;
+	struct thread_list_t * next;
+	assert(db && db->list);
+	status = EXIT_FAILURE;
 	pthread_mutex_lock(&db->list_mutex);
 	if (db->thread_count < db->thread_limit) {
-		db->next->tail = malloc(sizeof(struct thread_list_t));
-		db->next->tail->head = thread_data;
-		db->next->tail->tail = NULL;
+		next = malloc(sizeof(struct thread_list_t));
+		next->head = thread_data;
+		next->tail = db->list->tail;
 		if (pthread_create(&thread_data->tid, NULL, &packer, thread_data)) {
-	  		destroy(thread_data->space);
-			free(thread_data);
-			free(db->next->tail);
-			db->next->tail = NULL;
+			free(next);
 		} else {
 			++db->thread_count;
-			db->next = db->next->tail;
-			pthread_mutex_unlock(&db->list_mutex);
-			return EXIT_SUCCESS;
+			db->list->tail = next;
+			status = EXIT_SUCCESS;
 		}
 	}
 	pthread_mutex_unlock(&db->list_mutex);
-	return EXIT_FAILURE;
+	return status;
 }
 #endif
 
@@ -420,14 +416,14 @@ main(void)
 
 	/* Actual packing */
 	#ifdef THREADS
-	thread_db.list = init_thread_db(MAX_THREADS);
+	init_thread_db(&thread_db, MAX_THREADS);
 	#endif
 	box_db.list.head = world;
 	box_db.list.tail = NULL;
 	box_db.num_elements = 0;
 	pack(world, list, 0);
 	#ifdef THREADS
-	destroy_thread_db(NULL);
+	destroy_thread_db(&thread_db, NULL);
 	#endif
 
 	/* Print results */
