@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <fcntl.h>
+
 #define WORLD_ID '.'
 
 #ifdef THREADS
@@ -364,7 +366,7 @@ large_to_small(const void * a, const void * b)
 #endif
 
 int
-main(void)
+main(int argc, char ** argv)
 {
 	/* Declarations */
 	size_t i, pc;
@@ -373,8 +375,18 @@ main(void)
 	struct box_t * world, ** pieces;
 	struct box_list_t * list, * result;
 
+	/* TODO replace this hack */
+	int fp, sr;
+	if (argc == 2) {
+		fp = open(argv[1], O_RDONLY);
+		dup2(fp, 0);
+	} else {
+		fprintf(stderr, "USAGE: %s input_file\n", argv[0]);
+		return(EXIT_FAILURE);
+	}
+
 	/* Read input (TODO remove scanf's) */
-	int sr = scanf("%lu %lu\n%lu\n", &ww, &wh, &pc);
+	sr = scanf("%lu %lu\n%lu\n", &ww, &wh, &pc);
         assert(sr == 3);
 	world = create_with_data(wh, ww);
 	fill(world, WORLD_ID, 0, 0, wh, ww);
@@ -427,10 +439,12 @@ main(void)
 	#endif
 
 	/* Print results */
-	if (box_db.num_elements) {
-		printf("%lu solution(s) found:\n", box_db.num_elements);
+	if (box_db.num_elements == 0) {
+		printf("No solutions found\n");
+	} else if (box_db.num_elements == 1) {
+		printf("%lu solution found:\n", box_db.num_elements);
 	} else {
-		printf("No solutions found.\n");
+		printf("%lu solutions found:\n", box_db.num_elements);
 	}
 	result = box_db.list.tail;
 	while (result) {
@@ -449,5 +463,5 @@ main(void)
 	}
 	free(pieces);
 	free(list);
-	return EXIT_SUCCESS;
+	return(EXIT_SUCCESS);
 }

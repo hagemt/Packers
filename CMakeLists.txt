@@ -5,7 +5,6 @@ project(Packer C)
 option(ROTATE_PIECES "Use rotated pieces [experimental]" OFF)
 option(SORT_PIECES   "Sort pieces in increasing size"    ON)
 option(USE_THREADS   "Support for pthreads"              OFF)
-option(BUILD_TESTING "Include the testing harness"       OFF)
 
 if(ROTATE_PIECES)
   set(CMAKE_C_FLAGS "-DROTATIONS ${CMAKE_C_FLAGS}")
@@ -22,7 +21,7 @@ if(USE_THREADS)
   find_library(THREAD_LIBRARY_PATH pthread)
   if(THREAD_LIBRARY_PATH)
     set(CMAKE_C_FLAGS "-DTHREADS ${CMAKE_C_FLAGS}")
-    set(HW6_LIBRARIES ${PACKER_LIBRARIES} ${THREAD_LIBRARY_PATH})
+    set(CURRENT_LIBRARIES ${CURRENT_LIBRARIES} ${THREAD_LIBRARY_PATH})
   else(THREAD_LIBRARY_PATH)
     message(FATAL_ERROR "Cannot find thread library")
   endif(THREAD_LIBRARY_PATH)
@@ -30,7 +29,7 @@ endif(USE_THREADS)
 
 add_executable(${CMAKE_PROJECT_NAME} pack.c)
 set(CURRENT_EXECUTABLES ${CMAKE_PROJECT_NAME} ${CURRENT_EXECUTABLES})
-target_link_libraries(${CMAKE_PROJECT_NAME} ${PACKER_LIBRARIES})
+target_link_libraries(${CMAKE_PROJECT_NAME} ${CURRENT_LIBRARIES})
 
 set(EXECUTABLE_OUTPUT_PATH "${PROJECT_BINARY_DIR}/bin")
 install(
@@ -38,19 +37,35 @@ install(
   RUNTIME DESTINATION "${EXECUTABLE_OUTPUT_PATH}"
 )
 
+include(CTest)
 if(BUILD_TESTING)
-  include(CTest)
   set(CTEST_PROJECT_NAME ${CMAKE_PROJECT_NAME})
+  set(DART_TESTING_TIMEOUT 15)
+  set(TEST_EXECUTABLE "${EXECUTABLE_OUTPUT_PATH}/${CMAKE_PROJECT_NAME}")
+  set(TEST_FILE_DIR "${PROJECT_SOURCE_DIR}/Testing")
 
-  set(TEST_FILES
-    puzzle1
-    puzzle2
-    puzzle3
-    puzzle4
-    puzzle5
-    puzzle6)
+  add_test(NAME usage_string COMMAND "${TEST_EXECUTABLE}")
+  set_tests_properties(usage_string
+    PROPERTIES PASS_REGULAR_EXPRESSION "USAGE:.*")
 
-  foreach(TEST_FILE ${TEST_FILES})
-    add_test(${TEST_FILE} "${EXECUTABLE_OUTPUT_PATH}/${CMAKE_PROJECT_NAME}" "${PROJECT_SOURCE_DIR}/Testing/${TEST_FILE}.txt")
-  endforeach(TEST_FILE)
+  function(add_sample_test ID RESULT)
+    add_test(
+      NAME sample_${ID}
+      COMMAND "${TEST_EXECUTABLE}"
+              "${TEST_FILE_DIR}/Samples/${ID}.txt")
+    if(RESULT)
+      set_tests_properties(sample_${ID}
+        PROPERTIES PASS_REGULAR_EXPRESSION "${RESULT} solutions? found:")
+    else(RESULT)
+      set_tests_properties(sample_${ID}
+        PROPERTIES PASS_REGULAR_EXPRESSION "No solutions found.")
+    endif(RESULT)
+  endfunction(add_sample_test)
+
+  add_sample_test(puzzle1   16)
+  add_sample_test(puzzle2    0)
+  add_sample_test(puzzle3    8)
+  add_sample_test(puzzle4    8)
+  add_sample_test(puzzle5 4096)
+  add_sample_test(puzzle6    8)
 endif(BUILD_TESTING)
