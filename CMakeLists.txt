@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 2.8)
 
-project(HW6 C)
+project(Packer C)
 
 option(ROTATE_PIECES "Use rotated pieces [experimental]" OFF)
 option(SORT_PIECES   "Sort pieces in increasing size"    ON)
@@ -22,15 +22,15 @@ if(USE_THREADS)
   find_library(THREAD_LIBRARY_PATH pthread)
   if(THREAD_LIBRARY_PATH)
     set(CMAKE_C_FLAGS "-DTHREADS ${CMAKE_C_FLAGS}")
-    set(HW6_LIBRARIES ${HW6_LIBRARIES} ${THREAD_LIBRARY_PATH})
+    set(HW6_LIBRARIES ${PACKER_LIBRARIES} ${THREAD_LIBRARY_PATH})
   else(THREAD_LIBRARY_PATH)
     message(FATAL_ERROR "Cannot find thread library")
   endif(THREAD_LIBRARY_PATH)
 endif(USE_THREADS)
 
-add_executable(hw6 hw6.c)
-set(CURRENT_EXECUTABLES hw6 ${CURRENT_EXECUTABLES})
-target_link_libraries(hw6 ${HW6_LIBRARIES})
+add_executable(${CMAKE_PROJECT_NAME} pack.c)
+set(CURRENT_EXECUTABLES ${CMAKE_PROJECT_NAME} ${CURRENT_EXECUTABLES})
+target_link_libraries(${CMAKE_PROJECT_NAME} ${PACKER_LIBRARIES})
 
 set(EXECUTABLE_OUTPUT_PATH "${PROJECT_BINARY_DIR}/bin")
 install(
@@ -41,4 +41,16 @@ install(
 if(BUILD_TESTING)
   include(CTest)
   set(CTEST_PROJECT_NAME ${CMAKE_PROJECT_NAME})
+
+  set(TEST_FILES
+    puzzle1
+    puzzle2
+    puzzle3
+    puzzle4
+    puzzle5
+    puzzle6)
+
+  foreach(TEST_FILE ${TEST_FILES})
+    add_test(${TEST_FILE} "${EXECUTABLE_OUTPUT_PATH}/${CMAKE_PROJECT_NAME}" "${PROJECT_SOURCE_DIR}/Testing/${TEST_FILE}.txt")
+  endforeach(TEST_FILE)
 endif(BUILD_TESTING)
