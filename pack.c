@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <fcntl.h>
+#include <unistd.h>
 
 #define WORLD_ID '.'
 
@@ -156,9 +157,9 @@ struct
 thread_db_t
 {
 	struct thread_list_t * list;
-	pthread_mutex_t list_mutex;
-	pthread_mutex_t result_mutex;
-	size_t thread_count, thread_limit;
+	pthread_cond_t has_stabilized;
+	pthread_mutex_t join_mutex, list_mutex, result_mutex;
+	size_t num_elements, thread_count, thread_limit;
 } thread_db;
 
 inline void
@@ -167,9 +168,12 @@ prepare_thread_db(struct thread_db_t * db, size_t thread_limit)
 	db->list = malloc(sizeof(struct thread_list_t));
 	db->list->head = (struct thread_data_t *)0;
 	db->list->tail = NULL;
+	pthread_cond_init(&db->has_stabilized, NULL);
+	pthread_mutex_init(&db->join_mutex, NULL);
+	pthread_mutex_lock(&db->join_mutex);
 	pthread_mutex_init(&db->list_mutex, NULL);
 	pthread_mutex_init(&db->result_mutex, NULL);
-	db->thread_count = 0;
+	db->num_elements = db->thread_count = 0;
 	db->thread_limit = thread_limit;
 }
 
@@ -179,6 +183,9 @@ inline void
 finalize_thread_db(struct thread_db_t * db, thread_db_error_handler callback)
 {
 	struct thread_list_t * current, * next;
+	pthread_cond_wait(&db->has_stabilized, &db->join_mutex);
+	/* TODO easy way to do this simultaneously with the above? */
+	pthread_mutex_lock(&db->list_mutex);
 	current = db->list->tail;
 	while (current) {
 		next = current->tail;
@@ -196,33 +203,52 @@ finalize_thread_db(struct thread_db_t * db, thread_db_error_handler callback)
 		current = next;
 	}
 	free(db->list);
+	pthread_mutex_unlock(&db->list_mutex);
+	pthread_mutex_destroy(&db->join_mutex);
 	pthread_mutex_destroy(&db->list_mutex);
 	pthread_mutex_destroy(&db->result_mutex);
-	db->thread_count = db->thread_limit = 0;
+	pthread_cond_destroy(&db->has_stabilized);
+	#ifndef NDEBUG
+	fprintf(stderr, "INFO: %lu [max %lu] / %lu threads still running\n",
+		(long unsigned)db->thread_count,
+		(long unsigned)db->thread_limit,
+		(long unsigned)db->num_elements);
+	#endif
+	db->num_elements = db->thread_count = db->thread_limit = 0;
 }
 
 int
 add_thread(struct thread_db_t * db, struct thread_data_t * thread_data)
 {
-	int status;
 	struct thread_list_t * next;
+	int status = EXIT_FAILURE;
 	assert(db && db->list);
-	status = EXIT_FAILURE;
-	pthread_mutex_lock(&db->list_mutex);
-	if (db->thread_count < db->thread_limit) {
-		next = malloc(sizeof(struct thread_list_t));
-		next->head = thread_data;
-		next->tail = db->list->tail;
-		if (pthread_create(&thread_data->tid, NULL, &worker, thread_data)) {
-			free(next);
-		} else {
-			++db->thread_count;
-			db->list->tail = next;
-			status = EXIT_SUCCESS;
+	if (!pthread_mutex_trylock(&db->list_mutex)) {
+		if (db->thread_count < db->thread_limit) {
+			next = malloc(sizeof(struct thread_list_t));
+			next->head = thread_data;
+			next->tail = db->list->tail;
+			if (pthread_create(&thread_data->tid, NULL, &worker, thread_data)) {
+				free(next);
+			} else {
+				++db->thread_count;
+				++db->num_elements;
+				db->list->tail = next;
+				status = EXIT_SUCCESS;
+			}
 		}
+		pthread_mutex_unlock(&db->list_mutex);
+	}
+	return status;
+}
+
+inline void
+notify_thread(struct thread_db_t * db) {
+	pthread_mutex_lock(&db->list_mutex);
+	if (--db->thread_count == 0) {
+		pthread_cond_signal(&db->has_stabilized);
 	}
 	pthread_mutex_unlock(&db->list_mutex);
-	return status;
 }
 #endif
 
@@ -347,6 +373,7 @@ worker(void * thread_data)
 	#ifndef NDEBUG
 	fprintf(stderr, "[thread %lu] worker finished\n", (long unsigned)data->tid);
 	#endif
+	notify_thread(&thread_db);
 	return NULL;
 }
 #endif
@@ -402,6 +429,9 @@ main(int argc, char ** argv)
 		pieces[i]->data = NULL;
 	}
 	pieces[i] = NULL;
+	if (fp) {
+		close(fp);
+	}
 
 	/* Setup optional optimizations */
 	#ifdef SORT
