@@ -4,7 +4,8 @@ project(Packer C)
 
 option(ROTATE_PIECES "Use rotated pieces [experimental]" OFF)
 option(SORT_PIECES   "Sort pieces in increasing size"    ON)
-option(USE_THREADS   "Support for pthreads"              OFF)
+option(USE_THREADS   "Include support for threads"       OFF)
+option(USE_PRUNING   "Include Support for memoization"   OFF)
 
 if(ROTATE_PIECES)
   set(CMAKE_C_FLAGS "-DROTATIONS ${CMAKE_C_FLAGS}")
@@ -13,6 +14,10 @@ endif(ROTATE_PIECES)
 if(SORT_PIECES)
   set(CMAKE_C_FLAGS "-DSORT ${CMAKE_C_FLAGS}")
 endif(SORT_PIECES)
+
+if(USE_PRUNING)
+  set(CMAKE_C_FLAGS "-DPRUNE ${CMAKE_C_FLAGS}")
+endif(USE_PRUNING)
 
 if(USE_THREADS)
   if(ROTATE_PIECES)

@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <fcntl.h>
+#include <unistd.h>
 
 #define WORLD_ID '.'
 
@@ -35,7 +36,7 @@ box_list_t
 struct
 box_db_t {
 	struct box_list_t list;
-	box_size_t num_elements;
+	box_size_t num_elements, limit;
 } box_db;
 
 /* Box Manipulations *********************************************************/
@@ -264,6 +265,15 @@ fill(struct box_t * box, box_data_t value,
 	}
 }
 
+#ifdef PRUNE
+int
+nothing_fits_here(struct box_t * space, struct box_list_t * list, box_size_t i, box_size_t j)
+{
+	if (!space || !list || !list->head) { return 1; }
+	if (fits(space, list->head, i, j)) { return 0; }
+	return nothing_fits_here(space, list->tail, i, j);
+}
+#endif
 
 void
 pack(struct box_t * space, struct box_list_t * list, size_t depth)
@@ -297,6 +307,9 @@ pack(struct box_t * space, struct box_list_t * list, size_t depth)
 			#ifdef ROTATIONS
 			check_fits:
 			#endif
+			if (box_db.limit && box_db.limit >= box_db.num_elements) {
+				return;
+			}
 			if (fits(space, piece, i, j)) {
 				/* If the piece fits here, either spawn or branch */
         			#ifdef THREADS
@@ -316,9 +329,15 @@ pack(struct box_t * space, struct box_list_t * list, size_t depth)
 				fill(space, piece->id, i, j, piece->height, piece->width);
 				pack(space, list->tail, depth + 1);
 				fill(space, WORLD_ID, i, j, piece->height, piece->width);
+			}
+			#ifdef PRUNE
+			else if (nothing_fits_here(space, list->tail, i, j)) {
+				continue;
+			}
+			#endif
 			#ifdef ROTATIONS
 			/* TODO nix all of this, it's awful */
-			} else if (space->id == WORLD_ID) {
+			if (space->id == WORLD_ID) {
 				if (piece->height != piece->width) {
 					space->id = '\0';
 					rotate(piece);
@@ -327,8 +346,8 @@ pack(struct box_t * space, struct box_list_t * list, size_t depth)
 			} else {
 				space->id = WORLD_ID;
 				rotate(piece);
-			#endif
 			}
+			#endif
 		}
 	}
 }
@@ -377,11 +396,17 @@ main(int argc, char ** argv)
 
 	/* TODO replace this hack */
 	int fp, sr;
-	if (argc == 2) {
+	if (argc == 2 || argc == 3) {
 		fp = open(argv[1], O_RDONLY);
 		dup2(fp, 0);
+		if (argc == 3) {
+			box_db.limit = strtoul(argv[2], NULL, 10);
+			#ifndef NDEBUG
+			fprintf(stderr, "INFO: using limit (%lu) '%s'\n", box_db.limit, argv[2]);
+			#endif
+		}
 	} else {
-		fprintf(stderr, "USAGE: %s input_file\n", argv[0]);
+		fprintf(stderr, "USAGE: %s input_file [solution_count]\n", argv[0]);
 		return(EXIT_FAILURE);
 	}
 
@@ -402,6 +427,9 @@ main(int argc, char ** argv)
 		pieces[i]->data = NULL;
 	}
 	pieces[i] = NULL;
+	if (fp >= 0) {
+		close(fp);
+	}
 
 	/* Setup optional optimizations */
 	#ifdef SORT
@@ -442,7 +470,7 @@ main(int argc, char ** argv)
 	if (box_db.num_elements == 0) {
 		printf("No solutions found\n");
 	} else if (box_db.num_elements == 1) {
-		printf("%lu solution found:\n", box_db.num_elements);
+		printf("1 solution found:\n");
 	} else {
 		printf("%lu solutions found:\n", box_db.num_elements);
 	}
